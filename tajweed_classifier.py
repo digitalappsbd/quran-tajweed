@@ -407,7 +407,7 @@ def label_ayah(params):
 if __name__ == "__main__":
     # Load rules from incredibly high-tech datastore.
     rule_trees = {}
-    rule_start_files = glob.glob("output/rule_trees/*.start.json")
+    rule_start_files = glob.glob("./rule_trees/*.start.json")
     for start_file in rule_start_files:
         rule_name = os.path.basename(start_file).partition(".")[0]
         end_file = start_file.replace(".start.", ".end.")
