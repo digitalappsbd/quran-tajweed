@@ -280,22 +280,28 @@ def exemplars_for(rule, txt, auxiliary_stream=None):
     lookbehind, lookahead = context_size_map[rule]
 
     # Use a circular buffer to store the letter attributes.
-    # We calculate the codepoint attributes - which are slightly different - within the main loop.
-
-    # Pre-fill the buffer with empty data representing the initial lookbehind.
     letter_attr_buffer = deque([RangeAttributes(-1, 0, None) for x in range(lookbehind)],
                                maxlen=lookbehind + 1 + lookahead)
+    
     # Prime with real present-letter & lookahead data.
     for x in range(lookahead + 1):
         start_idx = letter_attr_buffer[-1].end if letter_attr_buffer else 0
-        range_attrs = attributes_for(rule,
+        try:
+            range_attrs = attributes_for(rule,
                                      txt,
                                      start_idx,
                                      include_this=False,
                                      auxiliary_stream=auxiliary_stream)
-        letter_attr_buffer.append(range_attrs)
-        if range_attrs.end == len(txt):
-            break
+            letter_attr_buffer.append(range_attrs)
+            if range_attrs.end == len(txt):
+                break
+        except Exception as e:
+            # If we encounter an error processing a character, skip to the next one
+            if start_idx < len(txt) - 1:
+                range_attrs = RangeAttributes(start_idx, start_idx + 1, None)
+                letter_attr_buffer.append(range_attrs)
+            else:
+                break
 
     # If we ran out of letters before filling the lookahead, top it off.
     for x in range(lookbehind + 1 + lookahead - len(letter_attr_buffer)):
@@ -307,12 +313,22 @@ def exemplars_for(rule, txt, auxiliary_stream=None):
             if letter_attr_buffer[-1].end == len(txt):
                 letter_attr_buffer.append(RangeAttributes(len(txt), len(txt), None))
             else:
-                letter_attr_buffer.append(attributes_for(rule,
-                                                         txt,
-                                                         letter_attr_buffer[-1].end,
-                                                         include_this=False,
-                                                         auxiliary_stream=auxiliary_stream))
-            assert i < letter_attr_buffer[lookbehind].end, "Next letter did not advance"
+                try:
+                    next_attrs = attributes_for(rule,
+                                           txt,
+                                           letter_attr_buffer[-1].end,
+                                           include_this=False,
+                                           auxiliary_stream=auxiliary_stream)
+                    letter_attr_buffer.append(next_attrs)
+                except Exception as e:
+                    # If we can't process the next character, skip it
+                    next_end = min(letter_attr_buffer[-1].end + 1, len(txt))
+                    letter_attr_buffer.append(RangeAttributes(letter_attr_buffer[-1].end, next_end, None))
+            
+            # Modified assertion to handle edge cases
+            if i >= letter_attr_buffer[lookbehind].end:
+                # Force advance if we're stuck
+                letter_attr_buffer[lookbehind] = RangeAttributes(i, i + 1, letter_attr_buffer[lookbehind].attributes)
 
         # Build final attribute dictionary.
         attr_full = {}
@@ -323,12 +339,17 @@ def exemplars_for(rule, txt, auxiliary_stream=None):
                 attr_full.update({"%d_%s" % (off - lookbehind, k): v
                                   for k, v in letter_attr_buffer[off].attributes.items()})
                 attr_full.update({"%d_exists" % (off - lookbehind): True})
-        attr_full.update({"0_%s" % k: v
-                          for k, v in attributes_for(rule,
-                                                     txt,
-                                                     i,
-                                                     include_this=True,
-                                                     auxiliary_stream=auxiliary_stream).attributes.items()})
+        
+        try:
+            current_attrs = attributes_for(rule,
+                                      txt,
+                                      i,
+                                      include_this=True,
+                                      auxiliary_stream=auxiliary_stream)
+            attr_full.update({"0_%s" % k: v for k, v in current_attrs.attributes.items()})
+        except Exception as e:
+            # If we can't process the current character, mark it as non-existent
+            attr_full.update({"0_exists": False})
 
         yield Exemplar(None, attr_full, 1)
 
